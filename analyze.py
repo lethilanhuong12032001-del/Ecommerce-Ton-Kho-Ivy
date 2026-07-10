@@ -117,11 +117,12 @@ def main():
     # Lấy các cột cần thiết cho transactions
     tx_list = []
     for idx, row in df1.iterrows():
+        qty = row['Số lượng'] if 'Số lượng' in row else row.get('SL', 0)
         tx_list.append({
             'date': row['date_str'],
             'sku': str(row['Mã vt']).strip(),
             'product': row['product_code'],
-            'qty': int(row['Số lượng']),
+            'qty': int(qty),
             'revenue': float(row['Tiền tổng']),
             'channel': row['channel']
         })

@@ -641,7 +641,7 @@
         }
 
         /* File inputs hidden */
-        #sku-file-input, #sales-file-input {
+        #sku-file-input, #sales-file-input, #returns-file-input {
             display: none;
         }
     </style>
@@ -664,6 +664,7 @@
             </div>
             <input type="file" id="sku-file-input" accept=".csv" onchange="handleFileSelect(this, 'sku')">
             <input type="file" id="sales-file-input" accept=".csv" onchange="handleFileSelect(this, 'sales')">
+            <input type="file" id="returns-file-input" accept=".csv" onchange="handleFileSelect(this, 'returns')">
         </header>
 
         <!-- KPI Cards -->
@@ -801,6 +802,7 @@
                     <button class="tab-btn active" onclick="switchTab('tab-top-products')">Top Bán Chạy</button>
                     <button class="tab-btn" onclick="switchTab('tab-slow-products')">Top Bán Chậm</button>
                     <button class="tab-btn" onclick="switchTab('tab-potential-products')">Sản Phẩm Tiềm Năng</button>
+                        <button class="tab-btn" onclick="switchTab('tab-returned-products')">Top Hàng Trả Lại</button>
                     <button class="tab-btn" onclick="switchTab('tab-all-products')">Danh sách sản phẩm</button>
                 </div>
                 <button class="btn-csv" style="padding: 6px 12px; font-size: 11px; background: #3b82f6; color: white; border: none; border-radius: 6px; cursor: pointer;" onclick="exportCurrentTable()"><i data-lucide="download" style="width: 12px; height: 12px; margin-right: 4px; display: inline-block; vertical-align: middle;"></i> Xuất báo cáo CSV</button>
@@ -809,6 +811,16 @@
             <!-- Table Filter Bar -->
             <div class="table-filter-bar" style="display: flex; gap: 12px; align-items: center; flex-wrap: wrap; margin-bottom: 15px; background: rgba(255,255,255,0.02); padding: 10px 15px; border-radius: 10px; border: 1px solid var(--panel-border);">
                 <div style="font-size: 11px; font-weight: 600; color: var(--text-muted); text-transform: uppercase; letter-spacing: 0.5px;">Lọc nhanh:</div>
+                <div class="filter-item" style="display: flex; align-items: center; gap: 6px;">
+                    <span style="font-size: 11px; color: var(--text-muted);">Kênh:</span>
+                    <select id="tab-filter-channel" onchange="renderTables()" style="background: #111827; border: 1px solid var(--panel-border); color: var(--text-main); padding: 4px 8px; border-radius: 6px; font-size: 11px; outline: none; cursor: pointer;">
+                        <option value="ALL" style="background: #111827; color: #f3f4f6;">Tất cả</option>
+                        <option value="Shopee" style="background: #111827; color: #f3f4f6;">Shopee</option>
+                        <option value="TikTok" style="background: #111827; color: #f3f4f6;">TikTok</option>
+                        <option value="Lazada" style="background: #111827; color: #f3f4f6;">Lazada</option>
+                        <option value="Khác" style="background: #111827; color: #f3f4f6;">Khác</option>
+                    </select>
+                </div>
                 <div class="filter-item" style="display: flex; align-items: center; gap: 6px;">
                     <span style="font-size: 11px; color: var(--text-muted);">Dòng:</span>
                     <select id="tab-filter-line" onchange="updateTabGroupFilter(); applyTabFilters()" style="background: #111827; border: 1px solid var(--panel-border); color: var(--text-main); padding: 4px 8px; border-radius: 6px; font-size: 11px; outline: none; cursor: pointer;">
@@ -850,7 +862,6 @@
                 <!-- Dynamic Table Content -->
             </div>
         </div>
-    </div>
 
     <!-- Charts Section -->
         <div class="charts-row">
@@ -873,6 +884,29 @@
                 <div class="chart-desc">Số lượng tồn kho theo năm phát hành sản phẩm</div>
                 <div class="chart-wrapper">
                     <canvas id="ageChart"></canvas>
+                </div>
+            </div>
+            <div class="chart-card">
+                <div class="chart-title">Doanh số đã xuất theo kênh</div>
+                <div class="chart-desc">Tỷ trọng doanh số đã xuất theo từng kênh</div>
+                <div class="chart-wrapper">
+                    <canvas id="channelChart"></canvas>
+                </div>
+            </div>
+            
+            <div class="chart-card">
+                <div class="chart-title">Doanh số đã hoàn theo kênh</div>
+                <div class="chart-desc">Tỷ trọng doanh số hoàn và tỷ lệ so với xuất</div>
+                <div class="chart-wrapper">
+                    <canvas id="returnChannelChart"></canvas>
+                </div>
+            </div>
+            
+            <div class="chart-card">
+                <div class="chart-title">Doanh số thực tế theo kênh</div>
+                <div class="chart-desc">Doanh số thực tế (Xuất trừ Hoàn)</div>
+                <div class="chart-wrapper">
+                    <canvas id="actualChannelChart"></canvas>
                 </div>
             </div>
         </div>
@@ -956,6 +990,7 @@
             </div>
         </div>
 
+    </div>
         <!-- Data Injection & JavaScript Logic -->
     <script>
         // DATABASE_PLACEHOLDER
@@ -974,6 +1009,7 @@
             'tab-top-products': { page: 1, pageSize: 15, sortBy: 'sales', sortDir: 'desc' },
             'tab-slow-products': { page: 1, pageSize: 15, sortBy: 'sales', sortDir: 'asc' },
             'tab-potential-products': { page: 1, pageSize: 15, sortBy: 'str', sortDir: 'desc' },
+            'tab-returned-products': { page: 1, pageSize: 15, sortBy: 'returned_qty', sortDir: 'desc' },
             'tab-all-products': { page: 1, pageSize: 15, sortBy: 'product', sortDir: 'asc' }
         };
 
@@ -1175,16 +1211,21 @@
                         const headers = results.meta.fields;
                         
                         // Detect file type based on headers
-                        if (headers.includes('Ma 16') || headers.includes('Ma 10') || headers.includes('Nguyen gia')) {
+                        const headerStr = headers.join(' ').toLowerCase();
+                        if (headerStr.includes('mã 16') || headerStr.includes('mã 10') || headerStr.includes('nguyên giá') || headerStr.includes('ma 16') || headerStr.includes('ma 10') || headerStr.includes('nguyen gia')) {
                             parseSkuStockData(results.data);
                             document.getElementById('upload-status').textContent = `Đã tải thành công File Tồn kho SKU: ${file.name}`;
                             document.getElementById('upload-status').style.color = '#34d399';
-                        } else if (headers.includes('Mã vt') || headers.includes('Tiền tổng') || headers.includes('Số lượng')) {
+                        } else if (headerStr.includes('hđ của ch') || headerStr.includes('diễn giải') || headerStr.includes('dien giai') || file.name.includes('tra_lai') || file.name.includes('hoan')) {
+                            parseReturnsData(results.data);
+                            document.getElementById('upload-status').textContent = `Đã tải thành công File Hàng Hoàn: ${file.name}`;
+                            document.getElementById('upload-status').style.color = '#34d399';
+                        } else if (headerStr.includes('mã vt') || headerStr.includes('tiền tổng') || headerStr.includes('số lượng') || headerStr.includes('sl') || headerStr.includes('tien tong') || headerStr.includes('so luong') || headerStr.includes('ma vt')) {
                             parseSalesData(results.data);
                             document.getElementById('upload-status').textContent = `Đã tải thành công File Bán hàng: ${file.name}`;
                             document.getElementById('upload-status').style.color = '#34d399';
                         } else {
-                            document.getElementById('upload-status').textContent = `Lỗi: File CSV không đúng định dạng chuẩn của Ivy Moda.`;
+                            document.getElementById('upload-status').textContent = `Lỗi: File CSV không đúng định dạng chuẩn. Headers: ${headers.slice(0, 5).join(', ')}`;
                             document.getElementById('upload-status').style.color = '#f87171';
                         }
                         
@@ -1207,7 +1248,7 @@
                 if ((bytes[0] === 0xFF && bytes[1] === 0xFE) || (bytes[0] === 0xFE && bytes[1] === 0xFF)) {
                     reader.readAsText(file, "UTF-16");
                 } else {
-                    reader.readAsText(file, "UTF-8-SIG"); // Handles UTF-8 BOM if present
+                    reader.readAsText(file, "UTF-8"); // Handles UTF-8 BOM if present
                 }
             };
             tester.readAsArrayBuffer(file.slice(0, 4));
@@ -1300,6 +1341,55 @@
         }
 
         // Parse Sales File Data
+        
+        function parseReturnsData(data) {
+            let rets = [];
+            data.forEach((row, i) => {
+                const ma_vt = String(row['Mã vt'] || row['Mã VT'] || row['mã vt'] || '').trim();
+                if (!ma_vt) return;
+                
+                const productCode = getProductCode(ma_vt);
+                const rawDate = row['Ngày'] || row['Ngày tháng'] || row['Ngày HĐ'] || '';
+                
+                let dateStr = '2026-06-01'; // Default
+                if (/^\d+(\.\d+)?$/.test(rawDate)) {
+                    let d = new Date(Math.round((parseFloat(rawDate) - 25569) * 86400 * 1000));
+                    if (!isNaN(d)) dateStr = d.toISOString().split('T')[0];
+                } else if (String(rawDate).includes('/')) {
+                    let parts = String(rawDate).split('/');
+                    if (parts.length >= 3) {
+                        let y = parts[2].split(' ')[0];
+                        let m = parts[1].padStart(2, '0');
+                        let d = parts[0].padStart(2, '0');
+                        dateStr = `${y}-${m}-${d}`;
+                    }
+                }
+                
+                let revenue = row['Tiền tổng'] || row['Thành tiền'] || row['Doanh số'] || 0;
+                let qty = row['Số lượng'] || row['SL'] || 0;
+                
+                if (typeof revenue === 'string') revenue = parseInt(revenue.replace(/[,.]/g, '')) || 0;
+                if (typeof qty === 'string') qty = parseInt(qty.replace(/[,.]/g, '')) || 0;
+                
+                const channelMap = { 'sn': 'Shopee', 'tt': 'TikTok', 'ln': 'Lazada' };
+                const ivmCode = String(row['IVM'] || '').trim().toLowerCase();
+                let channel = 'Khác';
+                if (ivmCode.length >= 5) {
+                    const chCode = ivmCode.slice(3, 5);
+                    if (channelMap[chCode]) channel = channelMap[chCode];
+                }
+                
+                rets.push({
+                    product: productCode,
+                    date: dateStr,
+                    qty: qty,
+                    revenue: revenue,
+                    channel: channel
+                });
+            });
+            DATABASE.returns = rets;
+        }
+
         function parseSalesData(data) {
             const list = [];
             const channelMap = { 'SN': 'Shopee', 'TT': 'TikTok', 'LN': 'Lazada' };
@@ -1310,7 +1400,7 @@
                 // Parse date
                 let dateStr = '';
                 const rawDate = row['Ngày'];
-                if (/^\d+$/.test(rawDate)) {
+                if (/^\d+(\.\d+)?$/.test(rawDate)) {
                     // Excel serialized date
                     const excelDate = parseInt(rawDate);
                     const dateObj = new Date((excelDate - 25569.0) * 86400 * 1000);
@@ -1332,7 +1422,7 @@
                     date: dateStr,
                     sku: String(row['Mã vt']).trim(),
                     product: getProductCode(row['Mã vt']),
-                    qty: parseInt(row['Số lượng']) || 0,
+                    qty: parseInt(row['Số lượng']) || parseInt(row['SL']) || 0,
                     revenue: parseFloat(row['Tiền tổng']) || 0,
                     channel: channel
                 });
@@ -1343,12 +1433,16 @@
         // Global dataset & filtered copies
         let filteredSkus = [];
         let filteredTx = [];
+        let filteredReturns = [];
         let latestReportDate = new Date('2026-07-09');
 
         // Chart instances
         let lineChartInstance = null;
         let programChartInstance = null;
         let ageChartInstance = null;
+        let channelChartInstance = null;
+        let returnChannelChartInstance = null;
+        let actualChannelChartInstance = null;
 
         // Initialize / Refresh Dashboard
         function initDashboard() {
@@ -1544,10 +1638,18 @@
                 return true;
             });
 
-            // 2. Filter transactions based on matching SKU list and date range
-            const matchedSkuSet = new Set(filteredSkus.map(s => s.sku));
+            // 2. Filter transactions based on matching Product list and date range
+            const matchedProductSet = new Set(filteredSkus.map(s => s.product));
             filteredTx = DATABASE.transactions.filter(t => {
-                if (!matchedSkuSet.has(t.sku)) return false;
+                if (!matchedProductSet.has(t.product)) return false;
+                if (startDateVal && t.date < startDateVal) return false;
+                if (endDateVal && t.date > endDateVal) return false;
+                return true;
+            });
+
+            DATABASE.returns = DATABASE.returns || [];
+            filteredReturns = DATABASE.returns.filter(t => {
+                if (!matchedProductSet.has(t.product)) return false;
                 if (startDateVal && t.date < startDateVal) return false;
                 if (endDateVal && t.date > endDateVal) return false;
                 return true;
@@ -1733,7 +1835,7 @@
                 return b - a;
             });
 
-            const yearValues = sortedYearKeys.map(k => yearData[k]);
+            const sortedYearValues = sortedYearKeys.map(k => yearData[k]);
 
             const ageCtx = document.getElementById('ageChart').getContext('2d');
             if (ageChartInstance) ageChartInstance.destroy();
@@ -1743,7 +1845,7 @@
                     labels: sortedYearKeys,
                     datasets: [{
                         label: 'Sản phẩm tồn kho',
-                        data: yearValues,
+                        data: sortedYearValues,
                         backgroundColor: '#3b82f6',
                         borderColor: '#2563eb',
                         borderWidth: 1
@@ -1761,18 +1863,216 @@
                     }
                 }
             });
+
+            // 4. Channel Chart (Doughnut)
+            const channelRev = {};
+            filteredTx.forEach(t => {
+                if (!channelRev[t.channel]) channelRev[t.channel] = 0;
+                channelRev[t.channel] += t.revenue;
+            });
+
+            const channelKeys = Object.keys(channelRev);
+            const channelValues = channelKeys.map(k => channelRev[k]);
+            
+            // Format labels with percentages
+            const totalRev = channelValues.reduce((a, b) => a + b, 0);
+            const channelLabels = channelKeys.map(k => {
+                const pct = totalRev > 0 ? ((channelRev[k] / totalRev) * 100).toFixed(1) : 0;
+                const money = new Intl.NumberFormat('vi-VN').format(channelRev[k] || 0) + ' đ';
+                return `${k}: ${money} (${pct}%)`;
+            });
+            channelLabels.push(`Tổng cộng: ${new Intl.NumberFormat('vi-VN').format(totalRev)} đ (100%)`);
+
+            const channelColors = [
+                '#f97316', // Shopee orange
+                '#06b6d4', // TikTok cyan
+                '#3b82f6', // Lazada blue
+                '#8b5cf6', // Khác purple
+                '#10b981'  // Extra
+            ];
+
+            const channelCtx = document.getElementById('channelChart').getContext('2d');
+            if (channelChartInstance) channelChartInstance.destroy();
+            
+            // --- COMPUTATIONS FOR NEW CHARTS ---
+            const returnChannelRev = {};
+            if (DATABASE.returns) {
+                DATABASE.returns.forEach(t => {
+                    const channelVal = document.getElementById('filter-channel') ? document.getElementById('filter-channel').value : 'ALL';
+                    const dateFromVal = document.getElementById('date-from') ? document.getElementById('date-from').value : '';
+                    const dateToVal = document.getElementById('date-to') ? document.getElementById('date-to').value : '';
+                    if (channelVal !== 'ALL' && t.channel !== channelVal) return;
+                    if (dateFromVal && t.date < dateFromVal) return;
+                    if (dateToVal && t.date > dateToVal) return;
+                    returnChannelRev[t.channel] = (returnChannelRev[t.channel] || 0) + t.revenue;
+                });
+            }
+
+            const returnChannelKeys = Object.keys(returnChannelRev).sort((a,b) => returnChannelRev[b] - returnChannelRev[a]);
+            const returnChannelValues = returnChannelKeys.map(k => returnChannelRev[k]);
+            const totalReturnRev = returnChannelValues.reduce((a, b) => a + b, 0);
+            
+            const returnChannelLabels = returnChannelKeys.map(k => {
+                const pct = totalReturnRev > 0 ? ((returnChannelRev[k] / totalReturnRev) * 100).toFixed(1) : 0;
+                const shipped = channelRev[k] || 0;
+                const ratio = shipped > 0 ? ((returnChannelRev[k] / shipped) * 100).toFixed(1) : 0;
+                const money = new Intl.NumberFormat('vi-VN').format(returnChannelRev[k] || 0) + ' đ';
+                return `${k}: ${money} (${pct}%) [Hoàn/Xuất: ${ratio}%]`;
+            });
+            const overallRatio = totalRev > 0 ? ((totalReturnRev / totalRev) * 100).toFixed(1) : 0;
+            returnChannelLabels.push(`Tổng cộng: ${new Intl.NumberFormat('vi-VN').format(totalReturnRev)} đ (100%) [Hoàn/Xuất: ${overallRatio}%]`);
+            const returnChannelColorsMap = {
+                'shopee': '#f97316', 'tiktok': '#06b6d4', 'lazada': '#3b82f6'
+            };
+            const returnChannelColors = returnChannelKeys.map(k => returnChannelColorsMap[k.toLowerCase()] || '#8b5cf6');
+
+            const actualChannelRev = {};
+            channelKeys.forEach(k => {
+                actualChannelRev[k] = channelRev[k] - (returnChannelRev[k] || 0);
+            });
+            returnChannelKeys.forEach(k => {
+                if (actualChannelRev[k] === undefined) {
+                    actualChannelRev[k] = -(returnChannelRev[k] || 0);
+                }
+            });
+            const actualChannelKeys = Object.keys(actualChannelRev).sort((a,b) => actualChannelRev[b] - actualChannelRev[a]);
+            const actualChannelValues = actualChannelKeys.map(k => actualChannelRev[k]);
+            const totalActualRev = actualChannelValues.reduce((a, b) => a + b, 0);
+            
+            const actualChannelLabels = actualChannelKeys.map(k => {
+                const pct = totalActualRev > 0 ? ((actualChannelRev[k] / totalActualRev) * 100).toFixed(1) : 0;
+                const money = new Intl.NumberFormat('vi-VN').format(actualChannelRev[k] || 0) + ' đ';
+                return `${k}: ${money} (${pct}%)`;
+            });
+            actualChannelLabels.push(`Tổng cộng: ${new Intl.NumberFormat('vi-VN').format(totalActualRev)} đ (100%)`);
+            const actualChannelColors = actualChannelKeys.map(k => returnChannelColorsMap[k.toLowerCase()] || '#8b5cf6');
+            
+            if (returnChannelChartInstance) returnChannelChartInstance.destroy();
+            if (actualChannelChartInstance) actualChannelChartInstance.destroy();
+            
+            const rctx = document.getElementById('returnChannelChart');
+            if (rctx) {
+                const rctx2d = rctx.getContext('2d');
+                returnChannelChartInstance = new Chart(rctx2d, {
+                    type: 'doughnut',
+                    data: {
+                        labels: returnChannelLabels,
+                        datasets: [{
+                            data: returnChannelValues,
+                            backgroundColor: [...returnChannelColors, 'transparent'],
+                            borderWidth: 0, hoverOffset: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false, cutout: '65%',
+                        plugins: {
+                            legend: { position: 'right', labels: { color: '#9ca3af', font: { family: "'Inter', sans-serif", size: 11 } } },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        let label = context.label || '';
+                                        if (label) label += ': ';
+                                        if (context.parsed !== null) {
+                                            label += new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(context.parsed);
+                                        }
+                                        return label;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            const actx = document.getElementById('actualChannelChart');
+            if (actx) {
+                const actx2d = actx.getContext('2d');
+                actualChannelChartInstance = new Chart(actx2d, {
+                    type: 'doughnut',
+                    data: {
+                        labels: actualChannelLabels,
+                        datasets: [{
+                            data: actualChannelValues,
+                            backgroundColor: [...actualChannelColors, 'transparent'],
+                            borderWidth: 0, hoverOffset: 4
+                        }]
+                    },
+                    options: {
+                        responsive: true, maintainAspectRatio: false, cutout: '65%',
+                        plugins: {
+                            legend: { position: 'right', labels: { color: '#9ca3af', font: { family: "'Inter', sans-serif", size: 11 } } },
+                            tooltip: {
+                                callbacks: {
+                                    label: function(context) {
+                                        let label = context.label || '';
+                                        if (label) label += ': ';
+                                        if (context.parsed !== null) {
+                                            label += new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(context.parsed);
+                                        }
+                                        return label;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                });
+            }
+
+            channelChartInstance = new Chart(channelCtx, {
+                type: 'doughnut',
+                data: {
+                    labels: channelLabels,
+                    datasets: [{
+                        data: channelValues,
+                        backgroundColor: [...channelColors.slice(0, channelKeys.length), 'transparent'],
+                        borderWidth: 0,
+                        hoverOffset: 4
+                    }]
+                },
+                options: {
+                    responsive: true,
+                    maintainAspectRatio: false,
+                    cutout: '65%',
+                    plugins: {
+                        legend: { position: 'right', labels: { color: '#9ca3af', font: { size: 11 } } },
+                        tooltip: {
+                            callbacks: {
+                                label: function(context) {
+                                    let label = context.label || '';
+                                    if (label) {
+                                        label = label.split(' (')[0] + ': ';
+                                    }
+                                    if (context.parsed !== null) {
+                                        label += new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(context.parsed);
+                                    }
+                                    return label;
+                                }
+                            }
+                        }
+                    }
+                }
+            });
         }
 
         // Render Tables & Recommendations
         // Compute aggregated products metrics from filtered transaction and SKU datasets
         function computeProductsData() {
+            const channelVal = document.getElementById('tab-filter-channel') ? document.getElementById('tab-filter-channel').value : 'ALL';
             const salesByProduct = {};
             const revenueByProduct = {};
             filteredTx.forEach(t => {
+                if (channelVal !== 'ALL' && t.channel !== channelVal) return;
                 salesByProduct[t.product] = (salesByProduct[t.product] || 0) + t.qty;
-                const skuMeta = DATABASE.skus.find(s => s.sku === t.sku);
-                const price = skuMeta ? (skuMeta.sale_price !== null ? skuMeta.sale_price : skuMeta.original_price) : 0;
-                revenueByProduct[t.product] = (revenueByProduct[t.product] || 0) + t.qty * price;
+                revenueByProduct[t.product] = (revenueByProduct[t.product] || 0) + t.revenue;
+            });
+
+            
+            const returnsByProduct = {};
+            const returnsRevenueByProduct = {};
+            filteredReturns.forEach(t => {
+                if (channelVal !== 'ALL' && t.channel !== channelVal) return;
+                returnsByProduct[t.product] = (returnsByProduct[t.product] || 0) + t.qty;
+                returnsRevenueByProduct[t.product] = (returnsRevenueByProduct[t.product] || 0) + t.revenue;
             });
 
             const stockByProduct = {};
@@ -1818,6 +2118,9 @@
                 const on3 = on3ByProduct[prod] || 0;
                 const sales = salesByProduct[prod] || 0;
                 const revenue = revenueByProduct[prod] || 0;
+                const returned_qty = returnsByProduct[prod] || 0;
+                const returned_revenue = returnsRevenueByProduct[prod] || 0;
+                const return_rate = sales > 0 ? (returned_qty / sales) * 100 : 0;
                 
                 const meta = productMeta[prod] || {
                     line: 'Khác',
@@ -1851,6 +2154,9 @@
                     group: meta.group,
                     sales: sales,
                     revenue: revenue,
+                    returned_qty: returned_qty,
+                    returned_revenue: returned_revenue,
+                    return_rate: return_rate,
                     stock: stock,
                     on1: on1,
                     on3: on3,
@@ -1917,6 +2223,25 @@
                     { id: 'program_detail', label: 'Chương Trình' },
                     { id: 'str', label: 'STR', align: 'right' },
                     { id: 'runoutDays', label: 'Dự kiến hết', align: 'right' }
+                ];
+            
+            } else if (activeTab === 'tab-returned-products') {
+                dataList = allProductsList.filter(p => p.returned_qty > 0);
+                columns = [
+                    { id: 'product', label: 'Mã Sản Phẩm' },
+                    { id: 'line', label: 'Dòng Hàng' },
+                    { id: 'group', label: 'Nhóm Hàng' },
+                    { id: 'sales', label: 'Đã bán', align: 'right' },
+                    { id: 'returned_qty', label: 'Đã hoàn', align: 'right' },
+                    { id: 'returned_revenue', label: 'Doanh số hoàn', align: 'right' },
+                    { id: 'stock', label: 'Tồn Web', align: 'right' },
+                    { id: 'on1', label: 'Tồn ON1', align: 'right' },
+                    { id: 'on3', label: 'Tồn ON3', align: 'right' },
+                    { id: 'original_price', label: 'Giá gốc', align: 'right' },
+                    { id: 'sale_price', label: 'Giá Sale', align: 'right' },
+                    { id: 'launch_date', label: 'Năm sản xuất' },
+                    { id: 'program_detail', label: 'Chương trình' },
+                    { id: 'return_rate', label: 'Tỷ lệ hoàn', align: 'right' }
                 ];
             } else if (activeTab === 'tab-potential-products') {
                 dataList = allProductsList.filter(p => p.sales >= 5 && p.sales <= 50 && p.str >= 15);
@@ -2005,11 +2330,16 @@
                         
                         if (col.id === 'product' || col.id === 'sku') {
                             html += `<td${style}><strong>${cellVal}</strong></td>`;
-                        } else if (col.id === 'sales' || col.id === 'stock' || col.id === 'on1' || col.id === 'on3' || col.id === 'web') {
+                        } else if (col.id === 'sales' || col.id === 'stock' || col.id === 'on1' || col.id === 'on3' || col.id === 'web' || col.id === 'returned_qty') {
                             html += `<td${style}>${formatNumber(cellVal)} sp</td>`;
-                        } else if (col.id === 'revenue' || col.id === 'original_price' || col.id === 'sale_price') {
+                        } else if (col.id === 'revenue' || col.id === 'original_price' || col.id === 'sale_price' || col.id === 'returned_revenue') {
                             html += `<td${style}>${formatMoney(cellVal)}</td>`;
-                        } else if (col.id === 'str') {
+                        } else if (col.id === 'str' || col.id === 'return_rate') {
+                            let color = 'var(--text-muted)';
+                            if (col.id === 'str' && cellVal > 30) color = 'var(--primary)';
+                            if (col.id === 'return_rate' && cellVal > 10) color = 'var(--danger)';
+                            html += `<td style="text-align: right; font-weight: 600; color: ${color}">${cellVal.toFixed(1)}%</td>`;
+                        } else if (col.id === 'DUMMY_FOR_REPLACE') {
                             html += `<td style="text-align: right; font-weight: 600; color: ${cellVal > 30 ? 'var(--primary)' : 'var(--text-muted)'}">${cellVal.toFixed(1)}%</td>`;
                         } else if (col.id === 'runoutDays') {
                             html += `<td style="text-align: right;">${formatRunout(cellVal)}</td>`;
@@ -2049,6 +2379,9 @@
         list = allProductsList.filter(p => p.sales > 0);
     } else if (activeTab === 'tab-slow-products') {
         list = allProductsList.filter(p => p.stock > 0);
+    
+            } else if (activeTab === 'tab-returned-products') {
+        list = allProductsList.filter(p => p.returned_qty > 0);
     } else if (activeTab === 'tab-potential-products') {
         list = allProductsList.filter(p => p.sales >= 5 && p.sales <= 50 && p.str >= 15);
     } else if (activeTab === 'tab-all-products') {
@@ -2070,11 +2403,21 @@
 
     list.forEach(p => {
         const dateVal = activeTab === 'tab-all-products' ? p.launch_date_raw : p.launch_date;
-        rows.push([
-            p.product, p.line, p.group, p.sales, p.revenue, p.stock, p.on1, p.on3,
-            p.original_price, p.sale_price, dateVal, p.program_detail,
-            p.str.toFixed(1) + "%", p.runoutDays === 999999 ? "Vô hạn" : p.runoutDays
-        ]);
+        
+        if (activeTab === 'tab-returned-products') {
+            rows.push([
+                p.product, p.line, p.group, p.returned_qty, p.returned_revenue, p.stock, p.on1, p.on3,
+                p.original_price, p.sale_price, dateVal, p.program_detail,
+                p.return_rate.toFixed(1) + "%"
+            ]);
+        } else {
+            rows.push([
+                p.product, p.line, p.group, p.sales, p.revenue, p.stock, p.on1, p.on3,
+                p.original_price, p.sale_price, dateVal, p.program_detail,
+                p.str.toFixed(1) + "%", p.runoutDays === 999999 ? "Vô hạn" : p.runoutDays
+            ]);
+        }
+
     });
 
     csvContent += [headers.join(",")].concat(rows.map(r => r.map(val => {
@@ -2091,116 +2434,7 @@
     document.body.removeChild(link);
 }
 
-// Render Tables & Recommendations
-        // Compute aggregated products metrics from filtered transaction and SKU datasets
-        function computeProductsData() {
-            const salesByProduct = {};
-            const revenueByProduct = {};
-            filteredTx.forEach(t => {
-                salesByProduct[t.product] = (salesByProduct[t.product] || 0) + t.qty;
-                const skuMeta = DATABASE.skus.find(s => s.sku === t.sku);
-                const price = skuMeta ? (skuMeta.sale_price !== null ? skuMeta.sale_price : skuMeta.original_price) : 0;
-                revenueByProduct[t.product] = (revenueByProduct[t.product] || 0) + t.qty * price;
-            });
 
-            const stockByProduct = {};
-            const on1ByProduct = {};
-            const on3ByProduct = {};
-            const productMeta = {};
-            
-            filteredSkus.forEach(s => {
-                stockByProduct[s.product] = (stockByProduct[s.product] || 0) + s.web;
-                on1ByProduct[s.product] = (on1ByProduct[s.product] || 0) + s.on1;
-                on3ByProduct[s.product] = (on3ByProduct[s.product] || 0) + s.on3;
-                
-                if (!productMeta[s.product]) {
-                    productMeta[s.product] = {
-                        line: s.line,
-                        group: s.group,
-                        original_price: s.original_price,
-                        sale_price: s.sale_price !== null ? s.sale_price : s.original_price,
-                        program_cat: s.program_cat,
-                        program_detail: s.program_detail,
-                        launch_date: s.launch_date,
-                        programs: new Set()
-                    };
-                }
-                if (s.program_detail) productMeta[s.product].programs.add(s.program_detail);
-            });
-
-            const txDates = filteredTx.map(t => new Date(t.date)).filter(d => !isNaN(d));
-            let numDays = 30;
-            if (txDates.length > 0) {
-                const minD = new Date(Math.min(...txDates));
-                const maxD = new Date(Math.max(...txDates));
-                const diffTime = Math.abs(maxD - minD);
-                numDays = Math.ceil(diffTime / (1000 * 60 * 60 * 24)) || 1;
-            }
-
-            const allProductsList = [];
-            const uniqueProds = Array.from(new Set(Object.keys(stockByProduct).concat(Object.keys(salesByProduct))));
-            
-            uniqueProds.forEach(prod => {
-                const stock = stockByProduct[prod] || 0;
-                const on1 = on1ByProduct[prod] || 0;
-                const on3 = on3ByProduct[prod] || 0;
-                const sales = salesByProduct[prod] || 0;
-                const revenue = revenueByProduct[prod] || 0;
-                
-                const meta = productMeta[prod] || {
-                    line: 'Khác',
-                    group: 'Khác',
-                    original_price: 0,
-                    sale_price: 0,
-                    program_cat: 'Chương trình Nguyên giá',
-                    program_detail: 'Nguyên giá',
-                    launch_date: '',
-                    programs: new Set(['Nguyên giá'])
-                };
-                
-                const total = stock + sales;
-                const str = total > 0 ? (sales / total * 100) : 0;
-                
-                const salesPerDay = sales / numDays;
-                const runoutDays = salesPerDay > 0 ? Math.ceil(stock / salesPerDay) : 999999;
-                
-                let launchYear = 'Không rõ';
-                if (meta.launch_date) {
-                    const lyr = new Date(meta.launch_date).getFullYear();
-                    if (!isNaN(lyr)) launchYear = String(lyr);
-                }
-
-                const currentPrograms = Array.from(meta.programs).filter(p => p !== 'Nguyên giá' && p !== '');
-                const progText = currentPrograms.length > 0 ? currentPrograms.join(', ') : 'Nguyên giá';
-
-                allProductsList.push({
-                    product: prod,
-                    line: meta.line,
-                    group: meta.group,
-                    sales: sales,
-                    revenue: revenue,
-                    stock: stock,
-                    on1: on1,
-                    on3: on3,
-                    original_price: meta.original_price,
-                    sale_price: meta.sale_price,
-                    program_cat: meta.program_cat,
-                    program_detail: progText,
-                    launch_date: launchYear,
-                    launch_date_raw: meta.launch_date || 'Không rõ',
-                    str: str,
-                    runoutDays: runoutDays
-                });
-            });
-
-            return { allProductsList, numDays };
-        }
-
-        // Render Recommendations Cards
-        function renderRecommendations(allProductsList) {
-            const recContainer = document.getElementById('clearance-container');
-            recContainer.innerHTML = '';
-        }
 
         // Render Tables & Recommendations
         function renderTables() {
@@ -2313,6 +2547,17 @@
                 modal.remove();
             };
             box.appendChild(btnSales);
+
+            const btnReturns = document.createElement('button');
+            btnReturns.className = 'sim-btn';
+            btnReturns.style.background = 'var(--danger)';
+            btnReturns.innerHTML = '<i data-lucide="rotate-ccw" style="width:16px;"></i> File Hàng Hoàn (bang_ke_tra_lai...)';
+            btnReturns.onclick = () => {
+                document.getElementById('returns-file-input').click();
+                modal.remove();
+            };
+            box.appendChild(btnReturns);
+
 
             modal.appendChild(box);
             document.body.appendChild(modal);
