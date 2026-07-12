@@ -993,6 +993,21 @@
     </div>
         <!-- Data Injection & JavaScript Logic -->
     <script>
+        // Global error handler
+        window.onerror = function(msg, url, line, col, error) {
+            console.error("Lỗi Hệ Thống:\n" + msg + "\nDòng: " + line);
+            const statusBox = document.getElementById('upload-status');
+            if (statusBox) {
+                statusBox.textContent = "Lỗi hệ thống: " + msg;
+                statusBox.style.color = '#f87171';
+            }
+            return false;
+        };
+        
+        window.onunhandledrejection = function(event) {
+            console.error("Lỗi Promise:\n" + event.reason);
+        };
+
         // DATABASE_PLACEHOLDER
 
         // Formatter utilities
@@ -1187,76 +1202,78 @@
         });
 
         // Smart file detection and parsing
-        function processUploadedFile(file) {
-            document.getElementById('upload-status').textContent = `Đang đọc file: ${file.name}...`;
+        function processUploadedFile(file, type) {
+            const statusBox = document.getElementById('upload-status');
+            statusBox.textContent = "Đang đọc file: " + file.name + "...";
+            statusBox.style.color = '#9ca3af';
             
-            const reader = new FileReader();
-            
-            // Detect encoding: check binary BOM or try reading first block
-            reader.onload = function(e) {
-                const text = e.target.result;
-                
-                // Smart delimiter detection
-                let delimiter = ',';
-                if (text.includes('\t')) {
-                    delimiter = '\t';
-                }
-                
-                // Parse CSV
-                Papa.parse(text, {
-                    header: true,
-                    delimiter: delimiter,
-                    skipEmptyLines: true,
-                    complete: function(results) {
-                        const headers = results.meta.fields;
-                        
-                        // Detect file type based on headers
-                        const headerStr = headers.join(' ').toLowerCase();
-                        if (headerStr.includes('mã 16') || headerStr.includes('mã 10') || headerStr.includes('nguyên giá') || headerStr.includes('ma 16') || headerStr.includes('ma 10') || headerStr.includes('nguyen gia')) {
-                            parseSkuStockData(results.data);
-                            document.getElementById('upload-status').textContent = `Đã tải thành công File Tồn kho SKU: ${file.name}`;
-                            document.getElementById('upload-status').style.color = '#34d399';
-                        } else if (headerStr.includes('hđ của ch') || headerStr.includes('diễn giải') || headerStr.includes('dien giai') || file.name.includes('tra_lai') || file.name.includes('hoan')) {
-                            parseReturnsData(results.data);
-                            document.getElementById('upload-status').textContent = `Đã tải thành công File Hàng Hoàn: ${file.name}`;
-                            document.getElementById('upload-status').style.color = '#34d399';
-                        } else if (headerStr.includes('mã vt') || headerStr.includes('tiền tổng') || headerStr.includes('số lượng') || headerStr.includes('sl') || headerStr.includes('tien tong') || headerStr.includes('so luong') || headerStr.includes('ma vt')) {
-                            parseSalesData(results.data);
-                            document.getElementById('upload-status').textContent = `Đã tải thành công File Bán hàng: ${file.name}`;
-                            document.getElementById('upload-status').style.color = '#34d399';
-                        } else {
-                            document.getElementById('upload-status').textContent = `Lỗi: File CSV không đúng định dạng chuẩn. Headers: ${headers.slice(0, 5).join(', ')}`;
-                            document.getElementById('upload-status').style.color = '#f87171';
-                        }
-                        
-                        // Refresh data
-                        initDashboard();
-                    },
-                    error: function(err) {
-                        document.getElementById('upload-status').textContent = `Lỗi phân tích: ${err.message}`;
-                        document.getElementById('upload-status').style.color = '#f87171';
-                    }
-                });
-            };
+            // Cảnh báo bước 1
+            console.log("Bước 1: Bắt đầu đọc file " + file.name + " (" + file.size + " bytes). Nếu sau thông báo này không có gì xảy ra, nghĩa là FileReader của trình duyệt bị treo.");
 
-            // Read with UTF-16 for sales (tab delimited usually) or standard UTF-8
-            // Let's read first few bytes to check if it's UTF-16
-            const tester = new FileReader();
-            tester.onload = function(e) {
-                const bytes = new Uint8Array(e.target.result);
-                // Check for UTF-16 BOM (FF FE or FE FF)
-                if ((bytes[0] === 0xFF && bytes[1] === 0xFE) || (bytes[0] === 0xFE && bytes[1] === 0xFF)) {
-                    reader.readAsText(file, "UTF-16");
-                } else {
-                    reader.readAsText(file, "UTF-8"); // Handles UTF-8 BOM if present
-                }
-            };
-            tester.readAsArrayBuffer(file.slice(0, 4));
+            try {
+                const reader = new FileReader();
+                
+                reader.onerror = function(e) {
+                    console.log("Lỗi ở Bước 2: FileReader gặp sự cố (" + e.target.error + "). File có thể đang bị khóa bởi Excel.");
+                };
+                
+                reader.onload = function(e) {
+                    console.log("Bước 2: FileReader đã đọc xong " + e.target.result.length + " ký tự. Bắt đầu PapaParse.");
+                    
+                    try {
+                        const text = e.target.result;
+                        let delimiter = ',';
+                        if (text.includes('\t')) delimiter = '\t';
+                        
+                        Papa.parse(text, {
+                            header: true,
+                            delimiter: delimiter,
+                            skipEmptyLines: true,
+                            complete: function(results) {
+                                console.log("Bước 3: PapaParse phân tích xong " + results.data.length + " dòng. Đang nạp dữ liệu.");
+                                try {
+                                    if (type === 'sku') {
+                                        parseSkuStockData(results.data);
+                                    } else if (type === 'returns') {
+                                        parseReturnsData(results.data);
+                                    } else if (type === 'sales') {
+                                        parseSalesData(results.data);
+                                    }
+                                    statusBox.textContent = "Đã tải thành công File: " + file.name;
+                                    statusBox.style.color = '#34d399';
+                                    initDashboard();
+                                    } catch (err) {
+                                    console.log("Lỗi ở Bước 4 (Xử lý dữ liệu): " + err.message);
+                                }
+                            },
+                            error: function(err) {
+                                console.log("Lỗi ở Bước 3 (PapaParse Error): " + err.message);
+                            }
+                        });
+                    } catch (err) {
+                        console.log("Lỗi ở Bước 3 (Crash PapaParse): " + err.message);
+                    }
+                };
+
+                // Bỏ qua tester, đọc trực tiếp bằng UTF-8
+                reader.readAsText(file, "UTF-8");
+                
+            } catch (err) {
+                statusBox.textContent = "Lỗi khởi tạo: " + err.message; statusBox.style.color = "#f87171";
+            }
         }
 
         // Helper functions for CSV mapping in browser
         function getProductCode(ma_vt) {
             ma_vt = String(ma_vt).trim();
+            // Use Regex to find the Ivy Moda product code anywhere in the string
+            // It looks for: 2 digits + any 2 chars + 1 letter + 4 digits
+            // e.g. '4810M82750290122' -> match[1]='48', match[2]='M8275' -> '48M8275'
+            const match = ma_vt.match(/(\d{2}).{2}([a-zA-Z]\d{4})/);
+            if (match) {
+                return match[1] + match[2].toUpperCase();
+            }
+            // Fallback
             if (ma_vt.length >= 9) {
                 return ma_vt.slice(0, 2) + ma_vt.slice(4, 9);
             }
@@ -1343,13 +1360,28 @@
         // Parse Sales File Data
         
         function parseReturnsData(data) {
+            DATABASE.returns = [];
             let rets = [];
             data.forEach((row, i) => {
-                const ma_vt = String(row['Mã vt'] || row['Mã VT'] || row['mã vt'] || '').trim();
-                if (!ma_vt) return;
+                let ma_vt = '';
+                for (const key in row) {
+                    if (key.toLowerCase().includes('vt') || key.toLowerCase().includes('16') || key.toLowerCase().includes('sku')) {
+                        ma_vt = row[key];
+                        break;
+                    }
+                }
+                ma_vt = String(ma_vt).trim();
+                if (!ma_vt || ma_vt === 'undefined' || ma_vt === 'null') return;
                 
                 const productCode = getProductCode(ma_vt);
-                const rawDate = row['Ngày'] || row['Ngày tháng'] || row['Ngày HĐ'] || '';
+                
+                let rawDate = '';
+                for (const key in row) {
+                    if (key.toLowerCase().includes('ng') && key.toLowerCase().includes('y')) {
+                        rawDate = row[key];
+                        break;
+                    }
+                }
                 
                 let dateStr = '2026-06-01'; // Default
                 if (/^\d+(\.\d+)?$/.test(rawDate)) {
@@ -1363,27 +1395,47 @@
                         let d = parts[0].padStart(2, '0');
                         dateStr = `${y}-${m}-${d}`;
                     }
+                } else if (rawDate) {
+                    dateStr = String(rawDate).trim();
                 }
-                
-                let revenue = row['Tiền tổng'] || row['Thành tiền'] || row['Doanh số'] || 0;
-                let qty = row['Số lượng'] || row['SL'] || 0;
-                
-                if (typeof revenue === 'string') revenue = parseInt(revenue.replace(/[,.]/g, '')) || 0;
-                if (typeof qty === 'string') qty = parseInt(qty.replace(/[,.]/g, '')) || 0;
-                
-                const channelMap = { 'sn': 'Shopee', 'tt': 'TikTok', 'ln': 'Lazada' };
-                const ivmCode = String(row['IVM'] || '').trim().toLowerCase();
-                let channel = 'Khác';
-                if (ivmCode.length >= 5) {
-                    const chCode = ivmCode.slice(3, 5);
-                    if (channelMap[chCode]) channel = channelMap[chCode];
+
+                let ivmVal = '';
+                for (const key in row) {
+                    if (key.toLowerCase() === 'ivm') {
+                        ivmVal = String(row[key]).trim();
+                        break;
+                    }
                 }
-                
+                const chanCode = ivmVal.slice(3, 5);
+                const channelMap = { 'SN': 'Shopee', 'TT': 'TikTok', 'LN': 'Lazada' };
+                const channel = channelMap[chanCode] || 'Khac';
+
+                let qty = 0;
+                for (const key in row) {
+                    const kl = key.toLowerCase();
+                    if (kl.includes('sl') || kl.includes('lu') || kl.includes('lư')) {
+                        qty = parseInt(row[key]);
+                        if (!isNaN(qty)) break;
+                    }
+                }
+                qty = qty || 0;
+
+                let val = 0;
+                for (const key in row) {
+                    const kl = key.toLowerCase();
+                    if (kl.includes('ti') && (kl.includes('t') || kl.includes('tiền'))) {
+                        val = parseFloat(row[key]);
+                        if (!isNaN(val)) break;
+                    }
+                }
+                val = val || 0;
+
                 rets.push({
-                    product: productCode,
                     date: dateStr,
+                    sku: ma_vt,
+                    product: productCode,
                     qty: qty,
-                    revenue: revenue,
+                    revenue: val,
                     channel: channel
                 });
             });
@@ -1395,35 +1447,71 @@
             const channelMap = { 'SN': 'Shopee', 'TT': 'TikTok', 'LN': 'Lazada' };
             
             data.forEach(row => {
-                if (!row['Mã vt']) return;
+                let ma_vt = '';
+                for (const key in row) {
+                    if (key.toLowerCase().includes('vt') || key.toLowerCase().includes('16') || key.toLowerCase().includes('sku')) {
+                        ma_vt = row[key];
+                        break;
+                    }
+                }
+                ma_vt = String(ma_vt).trim();
+                if (!ma_vt || ma_vt === 'undefined' || ma_vt === 'null') return;
                 
-                // Parse date
                 let dateStr = '';
-                const rawDate = row['Ngày'];
+                let rawDate = '';
+                for (const key in row) {
+                    if (key.toLowerCase().includes('ng') && key.toLowerCase().includes('y')) {
+                        rawDate = row[key];
+                        break;
+                    }
+                }
                 if (/^\d+(\.\d+)?$/.test(rawDate)) {
-                    // Excel serialized date
                     const excelDate = parseInt(rawDate);
                     const dateObj = new Date((excelDate - 25569.0) * 86400 * 1000);
-                    // Format YYYY-MM-DD
                     const year = dateObj.getFullYear();
                     const month = String(dateObj.getMonth() + 1).padStart(2, '0');
                     const day = String(dateObj.getDate()).padStart(2, '0');
                     dateStr = `${year}-${month}-${day}`;
                 } else if (rawDate) {
-                    dateStr = String(rawDate).trim(); // use as string
+                    dateStr = String(rawDate).trim();
                 }
                 
-                // Channel
-                const ivmVal = String(row['IVM']).trim();
+                let ivmVal = '';
+                for (const key in row) {
+                    if (key.toLowerCase() === 'ivm') {
+                        ivmVal = String(row[key]).trim();
+                        break;
+                    }
+                }
                 const chanCode = ivmVal.slice(3, 5);
-                const channel = channelMap[chanCode] || 'Khác';
+                const channel = channelMap[chanCode] || 'Khac';
+
+                let qty = 0;
+                for (const key in row) {
+                    const kl = key.toLowerCase();
+                    if (kl.includes('sl') || kl.includes('lu') || kl.includes('lư')) {
+                        qty = parseInt(row[key]);
+                        if (!isNaN(qty)) break;
+                    }
+                }
+                qty = qty || 0;
+
+                let rev = 0;
+                for (const key in row) {
+                    const kl = key.toLowerCase();
+                    if (kl.includes('ti') && (kl.includes('t') || kl.includes('tiền'))) {
+                        rev = parseFloat(row[key]);
+                        if (!isNaN(rev)) break;
+                    }
+                }
+                rev = rev || 0;
 
                 list.push({
                     date: dateStr,
-                    sku: String(row['Mã vt']).trim(),
-                    product: getProductCode(row['Mã vt']),
-                    qty: parseInt(row['Số lượng']) || parseInt(row['SL']) || 0,
-                    revenue: parseFloat(row['Tiền tổng']) || 0,
+                    sku: ma_vt,
+                    product: getProductCode(ma_vt),
+                    qty: qty,
+                    revenue: rev,
                     channel: channel
                 });
             });
@@ -1642,16 +1730,18 @@
             const matchedProductSet = new Set(filteredSkus.map(s => s.product));
             filteredTx = DATABASE.transactions.filter(t => {
                 if (!matchedProductSet.has(t.product)) return false;
-                if (startDateVal && t.date < startDateVal) return false;
-                if (endDateVal && t.date > endDateVal) return false;
+                const td = new Date(t.date);
+                if (startDateVal && td < new Date(startDateVal)) return false;
+                if (endDateVal && td > new Date(endDateVal)) return false;
                 return true;
             });
 
             DATABASE.returns = DATABASE.returns || [];
             filteredReturns = DATABASE.returns.filter(t => {
                 if (!matchedProductSet.has(t.product)) return false;
-                if (startDateVal && t.date < startDateVal) return false;
-                if (endDateVal && t.date > endDateVal) return false;
+                const td = new Date(t.date);
+                if (startDateVal && td < new Date(startDateVal)) return false;
+                if (endDateVal && td > new Date(endDateVal)) return false;
                 return true;
             });
 
@@ -1896,17 +1986,10 @@
             
             // --- COMPUTATIONS FOR NEW CHARTS ---
             const returnChannelRev = {};
-            if (DATABASE.returns) {
-                DATABASE.returns.forEach(t => {
-                    const channelVal = document.getElementById('filter-channel') ? document.getElementById('filter-channel').value : 'ALL';
-                    const dateFromVal = document.getElementById('date-from') ? document.getElementById('date-from').value : '';
-                    const dateToVal = document.getElementById('date-to') ? document.getElementById('date-to').value : '';
-                    if (channelVal !== 'ALL' && t.channel !== channelVal) return;
-                    if (dateFromVal && t.date < dateFromVal) return;
-                    if (dateToVal && t.date > dateToVal) return;
-                    returnChannelRev[t.channel] = (returnChannelRev[t.channel] || 0) + t.revenue;
-                });
-            }
+            filteredReturns.forEach(t => {
+                if (!returnChannelRev[t.channel]) returnChannelRev[t.channel] = 0;
+                returnChannelRev[t.channel] += t.revenue;
+            });
 
             const returnChannelKeys = Object.keys(returnChannelRev).sort((a,b) => returnChannelRev[b] - returnChannelRev[a]);
             const returnChannelValues = returnChannelKeys.map(k => returnChannelRev[k]);
@@ -2495,80 +2578,6 @@
         }
 
         // Helper trigger to open file input dialog
-        function triggerFileUpload() {
-            // Let the user pick if they want SKU or Sales file
-            const modal = document.createElement('div');
-            modal.style.position = 'fixed';
-            modal.style.top = '0';
-            modal.style.left = '0';
-            modal.style.width = '100%';
-            modal.style.height = '100%';
-            modal.style.background = 'rgba(0, 0, 0, 0.7)';
-            modal.style.display = 'flex';
-            modal.style.justifyContent = 'center';
-            modal.style.alignItems = 'center';
-            modal.style.zIndex = '9999';
-            modal.onclick = () => modal.remove();
-
-            const box = document.createElement('div');
-            box.style.background = '#111827';
-            box.style.border = '1px solid var(--panel-border)';
-            box.style.padding = '24px';
-            box.style.borderRadius = '16px';
-            box.style.display = 'flex';
-            box.style.flexDirection = 'column';
-            box.style.gap = '16px';
-            box.style.width = '320px';
-            box.onclick = (e) => e.stopPropagation();
-
-            const title = document.createElement('h3');
-            title.textContent = 'Chọn loại tệp tải lên';
-            title.style.fontSize = '15px';
-            title.style.fontWeight = '700';
-            title.style.marginBottom = '8px';
-            box.appendChild(title);
-
-            const btnSku = document.createElement('button');
-            btnSku.className = 'sim-btn';
-            btnSku.style.background = 'var(--secondary)';
-            btnSku.innerHTML = '<i data-lucide="package" style="width:16px;"></i> File Tồn Kho SKU (all_sku...)';
-            btnSku.onclick = () => {
-                document.getElementById('sku-file-input').click();
-                modal.remove();
-            };
-            box.appendChild(btnSku);
-
-            const btnSales = document.createElement('button');
-            btnSales.className = 'sim-btn';
-            btnSales.style.background = 'var(--primary)';
-            btnSales.innerHTML = '<i data-lucide="trending-up" style="width:16px;"></i> File Bán Hàng TMĐT (bang_ke...)';
-            btnSales.onclick = () => {
-                document.getElementById('sales-file-input').click();
-                modal.remove();
-            };
-            box.appendChild(btnSales);
-
-            const btnReturns = document.createElement('button');
-            btnReturns.className = 'sim-btn';
-            btnReturns.style.background = 'var(--danger)';
-            btnReturns.innerHTML = '<i data-lucide="rotate-ccw" style="width:16px;"></i> File Hàng Hoàn (bang_ke_tra_lai...)';
-            btnReturns.onclick = () => {
-                document.getElementById('returns-file-input').click();
-                modal.remove();
-            };
-            box.appendChild(btnReturns);
-
-
-            modal.appendChild(box);
-            document.body.appendChild(modal);
-            lucide.createIcons();
-        }
-
-        function handleFileSelect(input, type) {
-            if (input.files.length > 0) {
-                processUploadedFile(input.files[0]);
-            }
-        }
     </script>
 </body>
 </html>
