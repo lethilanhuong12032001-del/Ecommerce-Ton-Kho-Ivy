@@ -9,6 +9,8 @@
     <script src="https://unpkg.com/lucide@latest"></script>
     <!-- PapaParse for CSV parsing in browser -->
     <script src="https://cdn.jsdelivr.net/npm/papaparse@5.4.1/papaparse.min.js"></script>
+    <!-- JSZip for handling ZIP files disguised as CSVs -->
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/jszip/3.10.1/jszip.min.js"></script>
     <style>
         :root {
             --bg-color: #0b0f19;
@@ -1006,8 +1008,6 @@
             console.error("Lỗi Promise:\n" + event.reason);
         };
 
-        // DATABASE_PLACEHOLDER
-
         // Formatter utilities
         const formatMoney = (val) => {
             return new Intl.NumberFormat('vi-VN', { style: 'currency', currency: 'VND' }).format(val);
@@ -1201,7 +1201,6 @@
         function processUploadedFile(file, type) {
             const statusBox = document.getElementById('upload-status');
             statusBox.textContent = "Đang đọc file: " + file.name + "...";
-            statusBox.style.color = '#9ca3af';
 
             if (file) {
                 const reader = new FileReader();
@@ -1209,82 +1208,115 @@
                     try {
                         const buffer = event.target.result;
                         const view = new Uint8Array(buffer);
-                        let text = '';
                         
-                        // Check for UTF-16LE BOM (FF FE)
-                        if (view.length >= 2 && view[0] === 0xFF && view[1] === 0xFE) {
-                            const decoder = new TextDecoder('utf-16le');
-                            text = decoder.decode(buffer);
-                        } else {
-                            const decoder = new TextDecoder('utf-8');
-                            text = decoder.decode(buffer);
-                        }
-                        
-                        let lines = text.split(/\r?\n/);
-                        if (lines.length > 1) {
-                            let isSkuFile = false;
-                            let isSalesFile = false;
-                            let isReturnsFile = false;
-                            let kl = text.slice(0, 500).toLowerCase();
-                            let fname = file.name.toLowerCase();
-                            
-                            if (fname.includes('tra_lai') || fname.includes('trả lại') || fname.includes('hoàn')) {
-                                isReturnsFile = true;
-                            } else if (fname.includes('hoa_don') || fname.includes('hóa đơn') || fname.includes('bán') || (kl.includes('bán hàng theo kênh') && !kl.includes('trả'))) {
-                                isSalesFile = true;
-                            } else if (fname.includes('ton_kho') || fname.includes('tồn kho') || fname.includes('sku') || kl.includes('on1')) {
-                                isSkuFile = true;
-                            } else if (kl.includes('16') && kl.includes('7')) {
-                                isSkuFile = true;
-                            }
-
-                            let headerIdx = 0;
-                            for(let i=0; i<Math.min(lines.length, 10); i++) {
-                                const l = lines[i].toLowerCase();
-                                if (l.includes('16') || l.includes('vt') || l.includes('stt') || l.includes('on1') || (l.includes('mã') && l.includes('hàng')) || l.includes('sku') || l.includes('sl') || (l.split('\t').length > 5 && !l.includes('bảng kê'))) {
-                                    headerIdx = i;
-                                    break;
+                        // Check if it's a ZIP file disguised as a CSV (PK header)
+                        if (view.length > 4 && view[0] === 0x50 && view[1] === 0x4B && view[2] === 0x03 && view[3] === 0x04) {
+                            JSZip.loadAsync(buffer).then(function(zip) {
+                                const fileNames = Object.keys(zip.files);
+                                const csvFile = fileNames.find(name => name.toLowerCase().endsWith('.csv'));
+                                if (csvFile) {
+                                    zip.file(csvFile).async("string").then(function(csvText) {
+                                        parseCSVContent(csvText, file.name, type, statusBox);
+                                    });
+                                } else {
+                                    throw new Error("Không tìm thấy file .csv trong tập tin nén!");
                                 }
-                            }
-                            if (headerIdx > 0) {
-                                text = lines.slice(headerIdx).join('\n');
-                            }
-
-                            let delimiter = ',';
-                            if (text.includes('\t')) delimiter = '\t';
-                            
-                            Papa.parse(text, {
-                                header: true,
-                                skipEmptyLines: true,
-                                delimiter: delimiter,
-                                complete: function(results) {
-                                    if (isSkuFile) {
-                                        parseSkuStockData(results.data);
-                                    } else if (isSalesFile) {
-                                        parseSalesData(results.data);
-                                    } else if (isReturnsFile) {
-                                        parseReturnsData(results.data);
-                                    }
-                                    statusBox.textContent = "Đã tải thành công File: " + file.name;
-                                    statusBox.style.color = '#34d399';
-                                    initDashboard();
-                                },
-                                error: function(error) {
-                                    console.error('Error parsing CSV:', error);
-                                    statusBox.textContent = "Lỗi phân tích file " + file.name;
-                                    statusBox.style.color = '#f87171';
-                                }
+                            }).catch(function(err) {
+                                statusBox.textContent = "Lỗi giải nén file: " + err.message;
+                                statusBox.style.color = '#ef4444';
                             });
+                        } else {
+                            let text = '';
+                            if (view.length > 1 && view[0] === 0xFF && view[1] === 0xFE) {
+                                text = new TextDecoder('utf-16le').decode(view);
+                            } else {
+                                text = new TextDecoder('utf-8').decode(view);
+                            }
+                            parseCSVContent(text, file.name, type, statusBox);
                         }
                     } catch (err) {
                         statusBox.textContent = "Lỗi xử lý file: " + err.message;
                         statusBox.style.color = '#f87171';
                     }
                 };
+                reader.onerror = function() {
+                    statusBox.textContent = "Không thể đọc file " + file.name;
+                    statusBox.style.color = '#f87171';
+                };
                 reader.readAsArrayBuffer(file);
             }
         }
 
+        function parseCSVContent(text, fileName, type, statusBox) {
+            const lowerName = fileName.toLowerCase();
+            const lowerText = text.substring(0, 1000).toLowerCase();
+            
+            let isSalesFile = lowerName.includes('bán') || lowerName.includes('ban') || lowerName.includes('hóa_đơn') || lowerName.includes('hoa_don') || lowerName.includes('bang_ke_hoa_don') || lowerText.includes('hóa đơn');
+            let isReturnsFile = lowerName.includes('trả') || lowerName.includes('tra') || lowerName.includes('hoàn') || lowerName.includes('hoan') || lowerName.includes('bang_ke_tra_lai') || lowerText.includes('trả lại');
+            let isSkuFile = lowerName.includes('sku') || lowerName.includes('tồn') || lowerName.includes('ton') || lowerName.includes('all_sku') || lowerName.includes('tồn kho');
+
+            if (type === 'sales') { isSalesFile = true; isSkuFile = false; isReturnsFile = false; }
+            if (type === 'returns') { isReturnsFile = true; isSalesFile = false; isSkuFile = false; }
+            if (type === 'sku') { isSkuFile = true; isSalesFile = false; isReturnsFile = false; }
+
+            let lines = text.split(/\r?\n/);
+            if (lines.length > 1) {
+                let delimiter = ',';
+                if (text.includes('\t')) delimiter = '\t';
+                
+                let headerIdx = 0;
+                for(let i=0; i<Math.min(lines.length, 10); i++) {
+                    const l = lines[i].toLowerCase();
+                    if (l.includes('16') || l.includes('vt') || l.includes('stt') || l.includes('on1') || (l.includes('mã') && l.includes('hàng')) || l.includes('sku') || l.includes('sl') || (l.split('\t').length > 5 && !l.includes('bảng kê'))) {
+                        headerIdx = i;
+                        break;
+                    }
+                }
+                if (headerIdx > 0) {
+                    text = lines.slice(headerIdx).join('\n');
+                }
+                
+                Papa.parse(text, {
+                    header: true,
+                    skipEmptyLines: true,
+                    delimiter: delimiter,
+                    complete: function(results) {
+                        const cols = results.meta.fields || [];
+                        const colsStr = cols.join(',').toLowerCase();
+                        let isWebCol = cols.some(c => c.toLowerCase().trim() === 'web' || c.toLowerCase().trim() === 'on1');
+                        let processed = false;
+                        
+                        if (isReturnsFile) {
+                            parseReturnsData(results.data);
+                            processed = true;
+                        } else if (isSalesFile) {
+                            parseSalesData(results.data);
+                            processed = true;
+                        } else if (isSkuFile || isWebCol) {
+                            parseSkuStockData(results.data);
+                            processed = true;
+                        } else if (colsStr.includes('trả') || colsStr.includes('tra')) {
+                            parseReturnsData(results.data);
+                            processed = true;
+                        } else if (colsStr.includes('doanh')) {
+                            parseSalesData(results.data);
+                            processed = true;
+                        }
+
+                        if (!processed) {
+                            statusBox.textContent = "Không nhận diện được định dạng dữ liệu trong file: " + fileName;
+                            statusBox.style.color = '#f59e0b';
+                            return;
+                        }
+                        
+                        statusBox.textContent = "Đã tải thành công File: " + fileName;
+                        statusBox.style.color = '#34d399';
+                        setTimeout(() => initDashboard(), 50);
+                    }
+                });
+            }
+        }
+        
         const DATABASE = { transactions: [], returns: [], skus: [] };
 
         function getProductCode(ma_vt) {
@@ -1614,10 +1646,7 @@
                 const endInput = document.getElementById('filter-end-date');
                 
                 if (startInput && endInput) {
-                    startInput.min = minDate;
-                    startInput.max = maxDate;
-                    endInput.min = minDate;
-                    endInput.max = maxDate;
+                    // Removed dynamic min/max so user can pick any date freely.
                 }
             }
 

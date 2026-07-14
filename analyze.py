@@ -4,15 +4,32 @@ import json
 import re
 import pandas as pd
 import numpy as np
+import zipfile
+import io
 
 sys.stdout.reconfigure(encoding='utf-8')
 
-# File paths from the user's computer
-TX_PATH = r"C:\Users\Computer\Downloads\Ivymoda\BAO CAO\9cc17914_bang_ke_hoa_don_doi_tmdt.csv\9cc17914_bang_ke_hoa_don_doi_tmdt.csv"
-RET_PATH = r"C:\Users\Computer\Downloads\Ivymoda\BAO CAO\de804070_bang_ke_tra_lai_doi_tmdt.csv\de804070_bang_ke_tra_lai_doi_tmdt.csv"
-SKU_PATH = r"C:\Users\Computer\Downloads\Ivymoda\BAO CAO\all_sku_2026-07-12.csv"
-if not os.path.exists(SKU_PATH):
-    SKU_PATH = r"C:\Users\Computer\Downloads\Ivymoda\BAO CAO\all_sku_2026-07-09.csv"
+# Search for data files dynamically in the current directory
+import glob
+TX_PATH = ""
+RET_PATH = ""
+SKU_PATH = ""
+
+for f in glob.glob("*.csv") + glob.glob("*.zip"):
+    fname = os.path.basename(f).lower()
+    if 'hóa đơn' in fname or 'hoa don' in fname or 'hoa_don' in fname:
+        TX_PATH = f
+    elif 'trả lại' in fname or 'tra lai' in fname or 'tra_lai' in fname or 'hoan' in fname:
+        RET_PATH = f
+    elif 'sku' in fname or 'tồn' in fname or 'ton' in fname:
+        SKU_PATH = f
+
+if not TX_PATH or not RET_PATH or not SKU_PATH:
+    print(f"Lỗi: Không tìm thấy đủ 3 file dữ liệu trong thư mục hiện tại! TX={TX_PATH}, RET={RET_PATH}, SKU={SKU_PATH}")
+    print("Vui lòng copy 3 file dữ liệu (Hóa đơn, Trả lại, SKU) vào cùng thư mục với script này.")
+    # We shouldn't exit here if they want to run it anyway, but it will fail.
+    # We will let it fail later with a clear message or just exit now.
+    sys.exit(1)
 
 TEMPLATE_PATH = "index_template.html"
 OUTPUT_PATH = "index.html"
@@ -29,26 +46,66 @@ def get_product_code(ma_vt):
         
     return None
 
-def get_product_line(prod_code):
-    if len(prod_code) < 3:
-        return "Nhóm hàng khác"
-    char3 = prod_code[2]
-    if char3.isalpha():
-        char_upper = char3.upper()
-        if char_upper == 'T':
-            return "Nhóm hàng T"
-        elif char_upper in ['E', 'D']:
-            return "Nhóm hàng Metagent"
-        elif char_upper == 'S':
-            return "Nhóm hàng Senora"
-        elif char_upper == 'A':
-            return "Nhóm Quà tặng"
-        elif char_upper in ['B', 'H', 'M', 'P']:
-            return "Nhóm hàng Moda"
-        else:
-            return "Nhóm hàng khác"
-    else:
-        return "Nhóm hàng khác"
+def get_product_line(product_code):
+    lines = {
+        'E': 'Nhóm hàng Moda',
+        'T': 'Nhóm hàng Moda',
+        'M': 'Nhóm hàng Moda',
+        'V': 'Nhóm hàng Moda',
+        'W': 'Nhóm hàng Moda',
+        'Q': 'Nhóm hàng Moda',
+        'A': 'Nhóm hàng Moda',
+        'J': 'Nhóm hàng Moda',
+        'S': 'Nhóm hàng Senora',
+        'R': 'Nhóm hàng Senora',
+        'U': 'Nhóm hàng Nam',
+        'B': 'Nhóm hàng Nam',
+        'K': 'Nhóm hàng Kids',
+        'Y': 'Nhóm hàng Kids',
+        'L': 'Nhóm hàng Lingerie',
+        'N': 'Nhóm hàng Lingerie'
+    }
+    code = str(product_code).strip()
+    if len(code) >= 3:
+        line_code = code[2].upper()
+        if line_code in lines:
+            return lines[line_code]
+    return 'Nhóm hàng khác'
+
+def load_dataframe(path):
+    if not os.path.exists(path):
+        return pd.DataFrame()
+    
+    # Try reading as zip first
+    if zipfile.is_zipfile(path):
+        with zipfile.ZipFile(path, 'r') as z:
+            csv_files = [f for f in z.namelist() if f.lower().endswith('.csv')]
+            if csv_files:
+                with z.open(csv_files[0]) as f:
+                    try:
+                        return pd.read_csv(io.TextIOWrapper(f, encoding='utf-8-sig'), low_memory=False)
+                    except:
+                        f.seek(0)
+                        return pd.read_csv(io.TextIOWrapper(f, encoding='utf-16le'), sep='\t', low_memory=False)
+    
+    # Normal reading
+    try:
+        return pd.read_csv(path, low_memory=False)
+    except:
+        try:
+            return pd.read_csv(path, encoding='utf-8-sig', low_memory=False)
+        except:
+            return pd.read_csv(path, encoding='utf-16le', sep='\t', low_memory=False)
+
+def parse_date(val):
+    try:
+        # If it's a number (Excel serial)
+        fval = float(val)
+        if fval > 40000:
+            return pd.to_datetime('1899-12-30') + pd.to_timedelta(fval, unit='D')
+    except:
+        pass
+    return pd.to_datetime(val, errors='coerce')
 
 def get_product_group(prod_code):
     prefix2 = prod_code[:2]
@@ -107,13 +164,9 @@ def process_tx_file(path):
         print(f"Cảnh báo: Không tìm thấy {path}")
         return []
     
-    df = pd.read_csv(path, sep='\t', encoding='utf-16')
-    df['date_parsed'] = pd.to_datetime(df['Ngày'], unit='D', origin='1899-12-30', errors='coerce')
-    # If standard date parsing failed, try string parsing
-    mask = df['date_parsed'].isna()
-    if mask.any():
-        df.loc[mask, 'date_parsed'] = pd.to_datetime(df.loc[mask, 'Ngày'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
+    df = pd.read_csv(path, sep='\t', encoding='utf-16', low_memory=False)
     
+    df['date_parsed'] = pd.to_datetime(df['Ngày'].astype(str).apply(parse_date), errors='coerce')
     df['date_str'] = df['date_parsed'].dt.strftime('%Y-%m-%d')
     df['product_code'] = df['Mã vt'].astype(str).apply(get_product_code)
     df = df.dropna(subset=['product_code'])
@@ -146,10 +199,11 @@ def main():
 
     print("Đang đọc dữ liệu Tồn Kho (SKU)...")
     if not os.path.exists(SKU_PATH):
-        print(f"Lỗi: Không tìm thấy tệp {SKU_PATH}")
+        print("Không tìm thấy file Bảng kê bán hàng.")
         sys.exit(1)
         
-    df2 = pd.read_csv(SKU_PATH, sep=',', encoding='utf-8-sig')
+    df2 = load_dataframe(SKU_PATH)
+
     df2 = df2[df2['Ma 16'] != 'Ma 16']
     
     df2['ON1'] = pd.to_numeric(df2['ON1'], errors='coerce').fillna(0).astype(int)
@@ -211,7 +265,8 @@ def main():
     if "// DATABASE_PLACEHOLDER" in template_content:
         output_content = template_content.replace("// DATABASE_PLACEHOLDER", f"const DATABASE = {json_db_str};")
     else:
-        output_content = re.sub(r'const DATABASE = \{[\s\S]*?\};', f"const DATABASE = {json_db_str};", template_content)
+        output_content = re.sub(r'const DATABASE = \{[\s\S]*?\};', lambda m: f"const DATABASE = {json_db_str};", template_content)
+
     
     with open(OUTPUT_PATH, 'w', encoding='utf-8') as f:
         f.write(output_content)
