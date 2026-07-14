@@ -651,7 +651,7 @@
         <!-- Header -->
         <header>
             <div class="header-title">
-                <h1>E-Commerce Inventory Dashboard</h1>
+                <h1>E-Commerce Inventory Dashboard v3.2</h1>
                 <p>Hệ thống phân tích tồn kho, phân nhóm sản phẩm và tối ưu hóa chiến dịch Sale hàng tồn.</p>
             </div>
             <!-- Dynamic Drag & Drop Upload Zone -->
@@ -662,9 +662,7 @@
                     <p id="upload-status">Tải file all_sku... hoặc file bang_ke... (Tách biệt cột bằng Dấu phẩy hoặc Tab)</p>
                 </div>
             </div>
-            <input type="file" id="sku-file-input" accept=".csv" onchange="handleFileSelect(this, 'sku')">
-            <input type="file" id="sales-file-input" accept=".csv" onchange="handleFileSelect(this, 'sales')">
-            <input type="file" id="returns-file-input" accept=".csv" onchange="handleFileSelect(this, 'returns')">
+            <input type="file" id="fileUpload" accept=".csv,.txt" multiple style="display: none;" onchange="handleFileSelect(this)">
         </header>
 
         <!-- KPI Cards -->
@@ -1154,19 +1152,17 @@
         }
 
         // Trigger file upload selection
-        function triggerFileUpload() {
-            // Ask which file they want to upload
-            const input = document.createElement('input');
-            input.type = 'file';
-            input.accept = '.csv';
-            input.multiple = true;
-            input.onchange = (e) => {
-                const files = e.target.files;
+                function handleFileSelect(input) {
+            const files = input.files;
+            if (files.length > 0) {
                 for (let i = 0; i < files.length; i++) {
                     processUploadedFile(files[i]);
                 }
-            };
-            input.click();
+            }
+        }
+
+                function triggerFileUpload() {
+            document.getElementById('fileUpload').click();
         }
 
         // Set up Drag & Drop listeners
@@ -1206,78 +1202,102 @@
             const statusBox = document.getElementById('upload-status');
             statusBox.textContent = "Đang đọc file: " + file.name + "...";
             statusBox.style.color = '#9ca3af';
-            
-            // Cảnh báo bước 1
-            console.log("Bước 1: Bắt đầu đọc file " + file.name + " (" + file.size + " bytes). Nếu sau thông báo này không có gì xảy ra, nghĩa là FileReader của trình duyệt bị treo.");
 
-            try {
+            if (file) {
                 const reader = new FileReader();
-                
-                reader.onerror = function(e) {
-                    console.log("Lỗi ở Bước 2: FileReader gặp sự cố (" + e.target.error + "). File có thể đang bị khóa bởi Excel.");
-                };
-                
-                reader.onload = function(e) {
-                    console.log("Bước 2: FileReader đã đọc xong " + e.target.result.length + " ký tự. Bắt đầu PapaParse.");
-                    
+                reader.onload = function(event) {
                     try {
-                        const text = e.target.result;
-                        let delimiter = ',';
-                        if (text.includes('\t')) delimiter = '\t';
+                        const buffer = event.target.result;
+                        const view = new Uint8Array(buffer);
+                        let text = '';
                         
-                        Papa.parse(text, {
-                            header: true,
-                            delimiter: delimiter,
-                            skipEmptyLines: true,
-                            complete: function(results) {
-                                console.log("Bước 3: PapaParse phân tích xong " + results.data.length + " dòng. Đang nạp dữ liệu.");
-                                try {
-                                    if (type === 'sku') {
+                        // Check for UTF-16LE BOM (FF FE)
+                        if (view.length >= 2 && view[0] === 0xFF && view[1] === 0xFE) {
+                            const decoder = new TextDecoder('utf-16le');
+                            text = decoder.decode(buffer);
+                        } else {
+                            const decoder = new TextDecoder('utf-8');
+                            text = decoder.decode(buffer);
+                        }
+                        
+                        let lines = text.split(/\r?\n/);
+                        if (lines.length > 1) {
+                            let isSkuFile = false;
+                            let isSalesFile = false;
+                            let isReturnsFile = false;
+                            let kl = text.slice(0, 500).toLowerCase();
+                            let fname = file.name.toLowerCase();
+                            
+                            if (fname.includes('tra_lai') || fname.includes('trả lại') || fname.includes('hoàn')) {
+                                isReturnsFile = true;
+                            } else if (fname.includes('hoa_don') || fname.includes('hóa đơn') || fname.includes('bán') || (kl.includes('bán hàng theo kênh') && !kl.includes('trả'))) {
+                                isSalesFile = true;
+                            } else if (fname.includes('ton_kho') || fname.includes('tồn kho') || fname.includes('sku') || kl.includes('on1')) {
+                                isSkuFile = true;
+                            } else if (kl.includes('16') && kl.includes('7')) {
+                                isSkuFile = true;
+                            }
+
+                            let headerIdx = 0;
+                            for(let i=0; i<Math.min(lines.length, 10); i++) {
+                                const l = lines[i].toLowerCase();
+                                if (l.includes('16') || l.includes('vt') || l.includes('stt') || l.includes('on1') || (l.includes('mã') && l.includes('hàng')) || l.includes('sku') || l.includes('sl') || (l.split('\t').length > 5 && !l.includes('bảng kê'))) {
+                                    headerIdx = i;
+                                    break;
+                                }
+                            }
+                            if (headerIdx > 0) {
+                                text = lines.slice(headerIdx).join('\n');
+                            }
+
+                            let delimiter = ',';
+                            if (text.includes('\t')) delimiter = '\t';
+                            
+                            Papa.parse(text, {
+                                header: true,
+                                skipEmptyLines: true,
+                                delimiter: delimiter,
+                                complete: function(results) {
+                                    if (isSkuFile) {
                                         parseSkuStockData(results.data);
-                                    } else if (type === 'returns') {
-                                        parseReturnsData(results.data);
-                                    } else if (type === 'sales') {
+                                    } else if (isSalesFile) {
                                         parseSalesData(results.data);
+                                    } else if (isReturnsFile) {
+                                        parseReturnsData(results.data);
                                     }
                                     statusBox.textContent = "Đã tải thành công File: " + file.name;
                                     statusBox.style.color = '#34d399';
                                     initDashboard();
-                                    } catch (err) {
-                                    console.log("Lỗi ở Bước 4 (Xử lý dữ liệu): " + err.message);
+                                },
+                                error: function(error) {
+                                    console.error('Error parsing CSV:', error);
+                                    statusBox.textContent = "Lỗi phân tích file " + file.name;
+                                    statusBox.style.color = '#f87171';
                                 }
-                            },
-                            error: function(err) {
-                                console.log("Lỗi ở Bước 3 (PapaParse Error): " + err.message);
-                            }
-                        });
+                            });
+                        }
                     } catch (err) {
-                        console.log("Lỗi ở Bước 3 (Crash PapaParse): " + err.message);
+                        statusBox.textContent = "Lỗi xử lý file: " + err.message;
+                        statusBox.style.color = '#f87171';
                     }
                 };
-
-                // Bỏ qua tester, đọc trực tiếp bằng UTF-8
-                reader.readAsText(file, "UTF-8");
-                
-            } catch (err) {
-                statusBox.textContent = "Lỗi khởi tạo: " + err.message; statusBox.style.color = "#f87171";
+                reader.readAsArrayBuffer(file);
             }
         }
 
-        // Helper functions for CSV mapping in browser
+        const DATABASE = { transactions: [], returns: [], skus: [] };
+
         function getProductCode(ma_vt) {
             ma_vt = String(ma_vt).trim();
-            // Use Regex to find the Ivy Moda product code anywhere in the string
-            // It looks for: 2 digits + any 2 chars + 1 letter + 4 digits
-            // e.g. '4810M82750290122' -> match[1]='48', match[2]='M8275' -> '48M8275'
-            const match = ma_vt.match(/(\d{2}).{2}([a-zA-Z]\d{4})/);
-            if (match) {
-                return match[1] + match[2].toUpperCase();
-            }
-            // Fallback
-            if (ma_vt.length >= 9) {
-                return ma_vt.slice(0, 2) + ma_vt.slice(4, 9);
-            }
-            return ma_vt;
+            // Valid Ivy Moda codes MUST match the structure: 2 digits + 1 letter + 4 digits
+            let match = ma_vt.match(/^(\d{2})([a-zA-Z]\d{4})$/);
+            if (match) return match[1] + match[2].toUpperCase();
+            
+            // Or extract from the 16-char code
+            match = ma_vt.match(/(\d{2}).{2}([a-zA-Z]\d{4})/);
+            if (match) return match[1] + match[2].toUpperCase();
+            
+            return null;
         }
 
         function getProductLine(prod_code) {
@@ -1330,28 +1350,58 @@
         function parseSkuStockData(data) {
             const list = [];
             data.forEach(row => {
-                // Skip header duplicates
-                if (row['Ma 16'] === 'Ma 16' || !row['Ma 16']) return;
-                
-                const op = parseFloat(row['Nguyen gia']) || 0;
-                const sp = parseFloat(row['Sale']) || null;
-                const product = String(row['Ma 7']).trim();
-                const prog = classifySaleProgram(sp, op);
+                let ma16 = '';
+                let ma7 = '';
+                let nguyenGia = 0;
+                let sale = null;
+                let on1 = 0;
+                let on3 = 0;
+                let web = 0;
+                let ngayLenHang = '';
+                let trangThai = '';
+
+                for (const key in row) {
+                    const kl = key.toLowerCase();
+                    if (kl.includes('16')) ma16 = row[key];
+                    else if (kl.includes('7') && !kl.includes('16')) ma7 = row[key];
+                    else if (kl.includes('nguy') || kl.includes('nguyên')) nguyenGia = parseFloat(row[key]);
+                    else if (kl.includes('sale')) sale = parseFloat(row[key]);
+                    else if (kl.includes('on1')) on1 = parseInt(row[key]);
+                    else if (kl.includes('on3')) on3 = parseInt(row[key]);
+                    else if (kl.includes('web')) web = parseInt(row[key]);
+                    else if (kl.includes('ngay len') || kl.includes('ngày lên')) ngayLenHang = row[key];
+                    else if (kl.includes('trang thai') || kl.includes('trạng thái')) trangThai = row[key];
+                }
+
+                if (!ma16 || String(ma16).includes('Ma 16')) return;
+
+                nguyenGia = isNaN(nguyenGia) ? 0 : nguyenGia;
+                sale = isNaN(sale) ? null : sale;
+                on1 = isNaN(on1) ? 0 : on1;
+                on3 = isNaN(on3) ? 0 : on3;
+                web = isNaN(web) ? 0 : web;
+
+                let product = ma7 ? getProductCode(ma7) : getProductCode(ma16);
+                if (!product && ma7) {
+                    product = getProductCode(ma16);
+                }
+                if (!product) return;
+                const prog = classifySaleProgram(sale, nguyenGia);
                 
                 list.push({
-                    sku: String(row['Ma 16']).trim(),
+                    sku: String(ma16).trim(),
                     product: product,
                     line: getProductLine(product),
                     group: getProductGroup(product),
-                    on1: parseInt(row['ON1']) || 0,
-                    on3: parseInt(row['ON3']) || 0,
-                    web: parseInt(row['Web']) || 0,
-                    original_price: op,
-                    sale_price: sp,
+                    on1: on1,
+                    on3: on3,
+                    web: web,
+                    original_price: nguyenGia,
+                    sale_price: sale,
                     program_cat: prog.cat,
                     program_detail: prog.detail,
-                    launch_date: row['Ngay len hang'] || '',
-                    status: row['Trang thai'] || ''
+                    launch_date: ngayLenHang || '',
+                    status: trangThai || ''
                 });
             });
             DATABASE.skus = list;
@@ -1374,6 +1424,7 @@
                 if (!ma_vt || ma_vt === 'undefined' || ma_vt === 'null') return;
                 
                 const productCode = getProductCode(ma_vt);
+                if (!productCode) return;
                 
                 let rawDate = '';
                 for (const key in row) {
@@ -1391,6 +1442,7 @@
                     let parts = String(rawDate).split('/');
                     if (parts.length >= 3) {
                         let y = parts[2].split(' ')[0];
+                        if (y.length === 2) y = "20" + y;
                         let m = parts[1].padStart(2, '0');
                         let d = parts[0].padStart(2, '0');
                         dateStr = `${y}-${m}-${d}`;
@@ -1414,7 +1466,7 @@
                 for (const key in row) {
                     const kl = key.toLowerCase();
                     if (kl.includes('sl') || kl.includes('lu') || kl.includes('lư')) {
-                        qty = parseInt(row[key]);
+                        qty = Math.abs(parseInt(row[key]));
                         if (!isNaN(qty)) break;
                     }
                 }
@@ -1472,6 +1524,15 @@
                     const month = String(dateObj.getMonth() + 1).padStart(2, '0');
                     const day = String(dateObj.getDate()).padStart(2, '0');
                     dateStr = `${year}-${month}-${day}`;
+                } else if (String(rawDate).includes('/')) {
+                    let parts = String(rawDate).split('/');
+                    if (parts.length >= 3) {
+                        let y = parts[2].split(' ')[0];
+                        if (y.length === 2) y = "20" + y;
+                        let m = parts[1].padStart(2, '0');
+                        let d = parts[0].padStart(2, '0');
+                        dateStr = `${y}-${m}-${d}`;
+                    }
                 } else if (rawDate) {
                     dateStr = String(rawDate).trim();
                 }

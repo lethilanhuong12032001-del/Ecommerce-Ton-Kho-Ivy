@@ -1,6 +1,7 @@
 import os
 import sys
 import json
+import re
 import pandas as pd
 import numpy as np
 
@@ -18,9 +19,15 @@ OUTPUT_PATH = "index.html"
 
 def get_product_code(ma_vt):
     ma_vt = str(ma_vt).strip()
-    if len(ma_vt) >= 9:
-        return ma_vt[:2] + ma_vt[4:9]
-    return ma_vt
+    match = re.match(r'^(\d{2})([a-zA-Z]\d{4})$', ma_vt)
+    if match:
+        return match.group(1) + match.group(2).upper()
+        
+    match = re.search(r'(\d{2}).{2}([a-zA-Z]\d{4})', ma_vt)
+    if match:
+        return match.group(1) + match.group(2).upper()
+        
+    return None
 
 def get_product_line(prod_code):
     if len(prod_code) < 3:
@@ -108,7 +115,8 @@ def process_tx_file(path):
         df.loc[mask, 'date_parsed'] = pd.to_datetime(df.loc[mask, 'Ngày'], format='%d/%m/%Y %H:%M:%S', errors='coerce')
     
     df['date_str'] = df['date_parsed'].dt.strftime('%Y-%m-%d')
-    df['product_code'] = df['Mã vt'].apply(get_product_code)
+    df['product_code'] = df['Mã vt'].astype(str).apply(get_product_code)
+    df = df.dropna(subset=['product_code'])
     
     df['channel_raw'] = df['IVM'].astype(str).str[3:5]
     channel_map = {'SN': 'Shopee', 'TT': 'TikTok', 'LN': 'Lazada'}
@@ -154,7 +162,12 @@ def main():
     df2['program_cat'] = [r[0] for r in res_prog]
     df2['program_detail'] = [r[1] for r in res_prog]
     
-    df2['product_code'] = df2['Ma 7'].astype(str)
+    df2['product_code'] = df2['Ma 7'].astype(str).apply(get_product_code)
+    mask = df2['product_code'].isna()
+    if mask.any():
+        df2.loc[mask, 'product_code'] = df2.loc[mask, 'Ma 16'].astype(str).apply(get_product_code)
+    df2 = df2.dropna(subset=['product_code'])
+    
     df2['line'] = df2['product_code'].apply(get_product_line)
     df2['group'] = df2['product_code'].apply(get_product_group)
     df2['Ngay len hang'] = df2['Ngay len hang'].fillna('')
