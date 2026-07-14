@@ -1283,23 +1283,16 @@
                     complete: function(results) {
                         const cols = results.meta.fields || [];
                         const colsStr = cols.join(',').toLowerCase();
-                        let isWebCol = cols.some(c => c.toLowerCase().trim() === 'web' || c.toLowerCase().trim() === 'on1');
-                        let processed = false;
                         
-                        if (isReturnsFile) {
-                            parseReturnsData(results.data);
-                            processed = true;
-                        } else if (isSalesFile) {
-                            parseSalesData(results.data);
-                            processed = true;
-                        } else if (isSkuFile || isWebCol) {
+                        let processed = false;
+                        if (isSkuFile || colsStr.includes('web') || colsStr.includes('on1')) {
                             parseSkuStockData(results.data);
                             processed = true;
-                        } else if (colsStr.includes('trả') || colsStr.includes('tra')) {
-                            parseReturnsData(results.data);
-                            processed = true;
-                        } else if (colsStr.includes('doanh')) {
+                        } else if (isSalesFile || colsStr.includes('doanh')) {
                             parseSalesData(results.data);
+                            processed = true;
+                        } else if (isReturnsFile || colsStr.includes('trả') || colsStr.includes('tra')) {
+                            parseReturnsData(results.data);
                             processed = true;
                         }
 
